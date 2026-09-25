@@ -2,7 +2,7 @@ import { data, store, initStore, onChange } from './store.js';
 import { esc, ltr, durRange, uid, fmtDate, fmtDur, addDays, todayIso, CATEGORIES, defaultRange, snap, SNAP, byName, toast } from './util.js';
 import { openModal, confirmDialog } from './modal.js';
 import { KINDS, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel } from './equipment.js';
-import { renderEditor, isDragging } from './editor.js';
+import { renderEditor, isDragging, mobileQuery } from './editor.js';
 
 const main = document.getElementById('main');
 const ui = { lessonSearch: '', lessonCat: '' };
@@ -43,7 +43,7 @@ function renderUser() {
   if (store.mode === 'local') {
     el.innerHTML = '<span class="badge warn" title="הנתונים נשמרים רק בדפדפן הזה. ראו README לחיבור Firebase.">שמירה מקומית</span>';
   } else if (store.user) {
-    el.innerHTML = `<span class="muted">${esc(store.user.email)}</span> <button class="btn small" id="signout">יציאה</button>`;
+    el.innerHTML = `<span class="muted desktop-only">${esc(store.user.email)}</span> <button class="btn small" id="signout">יציאה</button>`;
     el.querySelector('#signout').onclick = () => store.signOut();
   } else el.innerHTML = '';
 }
@@ -166,14 +166,14 @@ function renderLessons() {
       <span class="muted">${list.length} שיעורים</span>
     </div>
     <table class="table">
-      <thead><tr><th>שם</th><th>סוג</th><th>אידיאלי</th><th>טווח</th><th>ציוד</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th class="hide-m">סוג</th><th>אידיאלי</th><th class="hide-m">טווח</th><th class="hide-m">ציוד</th><th></th></tr></thead>
       <tbody>${list.map((l) => `<tr data-id="${l.id}">
         <td><span class="dot" style="background:${l.color || CATEGORIES[l.category]?.color}"></span>${esc(l.name)}</td>
-        <td>${CATEGORIES[l.category]?.label || ''}</td>
+        <td class="hide-m">${CATEGORIES[l.category]?.label || ''}</td>
         <td>${fmtDur(l.ideal)}</td>
-        <td class="nowrap">${durRange(l.min, l.max)}</td>
-        <td class="eq-cell">${(l.equipment || []).map((r) => `<span class="chip">${esc(data.items.get(r.itemId)?.name || '?')} × ${rowLabel(r)}</span>`).join('') || '<span class="muted">—</span>'}</td>
-        <td class="nowrap"><button class="btn small" data-act="edit">עריכה</button> <button class="btn small danger" data-act="del">מחיקה</button></td>
+        <td class="nowrap hide-m">${durRange(l.min, l.max)}</td>
+        <td class="eq-cell hide-m">${(l.equipment || []).map((r) => `<span class="chip">${esc(data.items.get(r.itemId)?.name || '?')} × ${rowLabel(r)}</span>`).join('') || '<span class="muted">—</span>'}</td>
+        <td class="nowrap actions-cell"><button class="btn small" data-act="edit">עריכה</button> <button class="btn small danger" data-act="del">מחיקה</button></td>
       </tr>`).join('')}</tbody>
     </table>
   </div>`;
@@ -299,4 +299,5 @@ function renderStaff() {
 /* ---------- boot ---------- */
 window.addEventListener('hashchange', render);
 onChange(render);
+mobileQuery.addEventListener('change', render);
 initStore().then(render);

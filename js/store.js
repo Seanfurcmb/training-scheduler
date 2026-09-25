@@ -18,7 +18,8 @@ const emit = (coll) => listeners.forEach((fn) => fn(coll));
 
 let backend;
 export const store = {
-  mode: firebaseConfig ? 'firebase' : 'local',
+  // ?local in the URL forces browser-only storage (handy for testing without signing in)
+  mode: firebaseConfig && !new URLSearchParams(location.search).has('local') ? 'firebase' : 'local',
   user: null,
   status: 'loading', // loading | signed-out | denied | ready
   put: (coll, doc) => backend.put(coll, doc).catch(fail),

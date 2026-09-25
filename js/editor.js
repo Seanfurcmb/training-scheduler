@@ -10,9 +10,17 @@ import { buildIcs, googleLink } from './ics.js';
 import { encodeShare } from './share.js';
 import { flushRender, lessonModal } from './app.js';
 
-const view = { ppm: 1.4, search: '', cat: '', selectedDay: null, scroll: null, trainingId: null };
+const view = { ppm: 1.4, search: '', cat: '', selectedDay: null, scroll: null, trainingId: null, scrollToMin: null };
 let drag = null;
 export const isDragging = () => !!drag;
+
+// Phones: one day at a time, lessons added from a bottom sheet, blocks moved with long-press.
+export const mobileQuery = window.matchMedia('(max-width: 800px)');
+const isMobile = () => mobileQuery.matches;
+const LONG_PRESS_MS = 350;
+
+// While a touch drag is active, stop the page from scrolling under the finger.
+document.addEventListener('touchmove', (e) => { if (drag?.armed) e.preventDefault(); }, { passive: false });
 
 /* ---------- helpers ---------- */
 export function blockTitle(b) {
@@ -75,17 +83,30 @@ export function renderEditor(main, t, tab) {
   const tabs = [['schedule', 'לו"ז'], ['equipment', 'ציוד'], ['share', 'שליחה למתאמנים']];
   main.innerHTML = `<div class="editor">
     <div class="editor-head">
-      <a href="#/trainings" class="back">→ אימונים</a>
+      <a href="#/trainings" class="back" title="חזרה לאימונים">→<span class="desktop-only"> אימונים</span></a>
       <input class="title-input" id="t-name" value="${esc(t.name)}" aria-label="שם האימון">
-      <label class="inline">מתאמנים <input id="t-trainees" type="number" min="1" value="${t.trainees}"></label>
-      <label class="inline">מיקום <input id="t-location" value="${esc(t.location || '')}" placeholder="—"></label>
+      <label class="inline desktop-only">מתאמנים <input id="t-trainees" type="number" min="1" value="${t.trainees}"></label>
+      <label class="inline desktop-only">מיקום <input id="t-location" value="${esc(t.location || '')}" placeholder="—"></label>
+      <button class="icon-btn mobile-only" id="t-settings" title="פרטי האימון">⚙️</button>
       <nav class="tabs">${tabs.map(([k, v]) => `<a href="#/training/${t.id}/${k}" class="${tab === k ? 'active' : ''}">${v}</a>`).join('')}</nav>
     </div>
-    <div class="editor-body" id="editor-body"></div>
+    <div class="editor-body tab-${tab}" id="editor-body"></div>
   </div>`;
   main.querySelector('#t-name').onchange = (e) => e.target.value.trim() && save(t, { name: e.target.value.trim() });
   main.querySelector('#t-trainees').onchange = (e) => save(t, { trainees: Math.max(1, +e.target.value || 1) });
   main.querySelector('#t-location').onchange = (e) => save(t, { location: e.target.value.trim() });
+  main.querySelector('#t-settings').onclick = () => openModal({
+    title: 'פרטי האימון',
+    body: `<label>שם<input name="name" value="${esc(t.name)}"></label>
+      <div class="row">
+        <label>מספר מתאמנים<input name="trainees" type="number" inputmode="numeric" min="1" value="${t.trainees}"></label>
+        <label>מיקום<input name="location" value="${esc(t.location || '')}"></label>
+      </div>`,
+    onSave: (f) => {
+      const cur = data.trainings.get(t.id);
+      save(cur, { name: f.name.value.trim() || cur.name, trainees: Math.max(1, +f.trainees.value || 1), location: f.location.value.trim() });
+    },
+  });
 
   const body = main.querySelector('#editor-body');
   if (tab === 'equipment') return renderEquipment(body, t);
@@ -110,11 +131,32 @@ function paletteListHtml(t) {
 
 function renderSchedule(body, t) {
   const days = sortedDays(t);
+  const mobile = isMobile();
+  const shown = mobile ? days.filter((d) => d.id === view.selectedDay) : days;
+  const dayIdx = days.findIndex((d) => d.id === view.selectedDay);
   const height = (DAY_END - DAY_START) * view.ppm;
   const hours = [];
   for (let m = DAY_START; m < DAY_END; m += 30) hours.push(m);
 
-  body.innerHTML = `<div class="schedule">
+  const prevScroll = body.querySelector('.grid-scroll');
+  if (prevScroll) view.scroll = { top: prevScroll.scrollTop, left: prevScroll.scrollLeft, pal: body.querySelector('.palette-list')?.scrollTop || 0 };
+
+  const toolbar = mobile
+    ? `<div class="board-toolbar day-switch">
+        <button class="icon-btn big" id="day-prev" ${dayIdx <= 0 ? 'disabled' : ''} title="היום הקודם">›</button>
+        <button class="day-switch-label" id="day-label">${dayIdx >= 0 ? `יום ${dayIdx + 1}/${days.length} · ${fmtDate(days[dayIdx].date)}` : 'אין ימים'}</button>
+        <button class="icon-btn big" id="day-next" ${dayIdx >= days.length - 1 ? 'disabled' : ''} title="היום הבא">‹</button>
+        <button class="btn small" id="add-day">+ יום</button>
+      </div>`
+    : `<div class="board-toolbar">
+        <button class="btn small" id="add-day">+ הוספת יום</button>
+        <span class="muted">גררו שיעורים ללוח · משכו את התחתית לשינוי אורך · לחיצה לעריכה</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="zoom-out" title="הקטנה">−</button>
+        <button class="icon-btn" id="zoom-in" title="הגדלה">+</button>
+      </div>`;
+
+  body.innerHTML = `<div class="schedule ${mobile ? 'mobile' : ''}">
     <aside class="palette">
       <input type="search" id="pal-search" placeholder="חיפוש שיעור…" value="${esc(view.search)}">
       <div class="chips">
@@ -128,26 +170,39 @@ function renderSchedule(body, t) {
       <button class="btn small" id="new-lesson">+ שיעור חדש למאגר</button>
     </aside>
     <section class="board">
-      <div class="board-toolbar">
-        <button class="btn small" id="add-day">+ הוספת יום</button>
-        <span class="muted">גררו שיעורים ללוח · משכו את התחתית לשינוי אורך · לחיצה לעריכה</span>
-        <span class="spacer"></span>
-        <button class="icon-btn" id="zoom-out" title="הקטנה">−</button>
-        <button class="icon-btn" id="zoom-in" title="הגדלה">+</button>
-      </div>
+      ${toolbar}
       <div class="grid-scroll">
-        ${days.length ? `<div class="grid" style="--ppm:${view.ppm}">
+        ${shown.length ? `<div class="grid" style="--ppm:${view.ppm}">
           <div class="time-col">
             <div class="col-head"></div>
             <div class="time-body" style="height:${height}px">
               ${hours.map((m) => `<div class="time-label ${m % 60 ? 'half' : ''}" style="top:${(m - DAY_START) * view.ppm}px">${fmtTime(m)}</div>`).join('')}
             </div>
           </div>
-          ${days.map((d) => dayColumnHtml(t, d, height)).join('')}
+          ${shown.map((d) => dayColumnHtml(t, d, height)).join('')}
         </div>` : '<p class="empty">אין ימים באימון. הוסיפו יום כדי להתחיל.</p>'}
       </div>
+      ${mobile && shown.length ? `<p class="mobile-hint">לחיצה על משבצת לעריכה · לחיצה ארוכה וגרירה להזזה</p>
+        <button class="fab" id="fab-add">+ הוספה</button>` : ''}
     </section>
   </div>`;
+
+  if (mobile) {
+    const go = (i) => { if (days[i]) { view.selectedDay = days[i].id; renderSchedule(body, t); } };
+    body.querySelector('#day-prev').onclick = () => go(dayIdx - 1);
+    body.querySelector('#day-next').onclick = () => go(dayIdx + 1);
+    body.querySelector('#day-label').onclick = () => dayIdx >= 0 && dayModal(t, days[dayIdx]);
+    body.querySelector('#fab-add')?.addEventListener('click', () => openAddSheet(t));
+    // Horizontal swipe switches days (RTL: swipe right = next day)
+    const gs = body.querySelector('.grid-scroll');
+    let sx = 0, sy = 0;
+    gs.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+    gs.addEventListener('touchend', (e) => {
+      if (drag) return;
+      const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(dy)) go(dayIdx + (dx > 0 ? 1 : -1));
+    });
+  }
 
   // palette
   const search = body.querySelector('#pal-search');
@@ -160,8 +215,8 @@ function renderSchedule(body, t) {
   }));
   body.querySelector('#new-lesson').onclick = () => lessonModal();
   body.querySelector('#add-day').onclick = () => addDayModal(t);
-  body.querySelector('#zoom-in').onclick = () => { view.ppm = Math.min(3, view.ppm + 0.3); keepCenter(body); renderSchedule(body, t); };
-  body.querySelector('#zoom-out').onclick = () => { view.ppm = Math.max(0.6, view.ppm - 0.3); keepCenter(body); renderSchedule(body, t); };
+  body.querySelector('#zoom-in')?.addEventListener('click', () => { view.ppm = Math.min(3, view.ppm + 0.3); keepCenter(body); renderSchedule(body, t); });
+  body.querySelector('#zoom-out')?.addEventListener('click', () => { view.ppm = Math.max(0.6, view.ppm - 0.3); keepCenter(body); renderSchedule(body, t); });
 
   body.querySelector('.palette').addEventListener('pointerdown', (e) => {
     const item = e.target.closest('.pal-item');
@@ -199,7 +254,13 @@ function renderSchedule(body, t) {
   const gs = body.querySelector('.grid-scroll');
   const pl = body.querySelector('.palette-list');
   if (view.scroll) { gs.scrollTop = view.scroll.top; gs.scrollLeft = view.scroll.left; pl.scrollTop = view.scroll.pal; }
-  else gs.scrollTop = 60 * view.ppm;
+  else gs.scrollTop = 60 * view.ppm - 12;
+  if (view.scrollToMin != null) {
+    // bring a just-added block into view
+    const top = (view.scrollToMin - DAY_START) * view.ppm;
+    if (top < gs.scrollTop || top > gs.scrollTop + gs.clientHeight - 80) gs.scrollTop = top - 60;
+    view.scrollToMin = null;
+  }
 }
 
 function keepCenter(body) {
@@ -250,9 +311,21 @@ function blockHtml(b, pos) {
 }
 
 /* ---------- drag & drop (pointer events: mouse + touch) ---------- */
+// Mouse: drag starts after a small move. Touch: a short swipe scrolls as usual, and a
+// long press "lifts" the block so it can be dragged (resize handles drag immediately).
 function beginDrag(e, t, spec) {
-  e.preventDefault();
-  drag = { ...spec, t, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, started: false, target: null };
+  const touch = e.pointerType === 'touch' && spec.kind !== 'resize';
+  if (!touch) e.preventDefault();
+  drag = { ...spec, t, touch, armed: !touch, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, started: false, target: null };
+  if (touch) {
+    drag.pressTimer = setTimeout(() => {
+      if (!drag) return;
+      drag.armed = true;
+      navigator.vibrate?.(15);
+      startVisuals();
+      update();
+    }, LONG_PRESS_MS);
+  }
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', cancelDrag);
@@ -293,6 +366,11 @@ function autoScroll() {
 
 function onMove(e) {
   drag.x = e.clientX; drag.y = e.clientY;
+  if (!drag.armed) {
+    // finger moved before the long press fired: it's a scroll, not a drag
+    if (Math.hypot(drag.x - drag.x0, drag.y - drag.y0) > 8) { drag.scrolled = true; clearTimeout(drag.pressTimer); }
+    return;
+  }
   if (!drag.started) {
     if (Math.hypot(drag.x - drag.x0, drag.y - drag.y0) < 5) return;
     startVisuals();
@@ -312,8 +390,9 @@ function update() {
     drag.el.querySelector('.dur').textContent = fmtDur(drag.duration);
     return;
   }
-  drag.ghost.style.left = `${x + 12}px`;
-  drag.ghost.style.top = `${y + 8}px`;
+  // keep the ghost visible above the finger on touch
+  drag.ghost.style.left = `${drag.touch ? x - 60 : x + 12}px`;
+  drag.ghost.style.top = `${drag.touch ? y - 56 : y + 8}px`;
   const gs = document.querySelector('.grid-scroll');
   const gsr = gs?.getBoundingClientRect();
   const inside = gsr && x >= gsr.left && x <= gsr.right && y >= gsr.top - 20 && y <= gsr.bottom;
@@ -336,6 +415,7 @@ function cleanup() {
   window.removeEventListener('pointerup', onUp);
   window.removeEventListener('pointercancel', cancelDrag);
   clearInterval(drag.timer);
+  clearTimeout(drag.pressTimer);
   drag.ghost?.remove(); drag.preview?.remove();
   drag.el?.classList.remove('drag-source', 'resizing');
   document.body.classList.remove('dragging-active');
@@ -347,7 +427,10 @@ function cancelDrag() { cleanup(); flushRender(); }
 function onUp() {
   const d = cleanup();
   const t = data.trainings.get(d.t.id) || d.t;
+  if (d.scrolled) return flushRender();
   if (!d.started) {
+    // a lifted-but-not-moved touch block is a no-op; a plain tap opens / adds
+    if (d.touch && d.armed) return flushRender();
     if (d.kind === 'new') appendToSelectedDay(t, d);
     else blockModal(t, d.block);
     return flushRender();
@@ -375,6 +458,68 @@ function appendToSelectedDay(t, d) {
   toast(`נוסף ל${fmtDate(day.date)} ב-${fmtTime(start)}`);
 }
 
+const dayEnd = (t, dayId) => {
+  const bs = t.blocks.filter((b) => b.dayId === dayId);
+  return bs.length ? Math.max(...bs.map((b) => b.start + b.duration)) : DEFAULT_APPEND_START;
+};
+
+// Bottom sheet for phones: pick a lesson/meal/break and a start time (default: end of the day).
+function openAddSheet(t) {
+  const day = t.days.find((d) => d.id === view.selectedDay);
+  if (!day) return;
+  const root = document.getElementById('modal-root');
+  const start = Math.min(dayEnd(t, day.id), DAY_END - SNAP);
+  root.innerHTML = `<div class="modal-backdrop sheet-backdrop">
+    <div class="modal sheet add-sheet">
+      <header><h2>הוספה ל${esc(fmtDate(day.date))}</h2><button type="button" class="icon-btn" data-close>✕</button></header>
+      <div class="sheet-controls">
+        <label class="inline">שעת התחלה <input type="time" step="600" id="add-start" value="${fmtTime(start)}"></label>
+        <input type="search" id="sheet-search" placeholder="חיפוש שיעור…" value="${esc(view.search)}">
+        <div class="chips">
+          <button class="chip-btn ${!view.cat ? 'active' : ''}" data-cat="">הכל</button>
+          ${Object.entries(CATEGORIES).map(([k, c]) => `<button class="chip-btn ${view.cat === k ? 'active' : ''}" data-cat="${k}">${c.label}</button>`).join('')}
+        </div>
+        <div class="pal-special">
+          ${Object.entries(BLOCK_TYPES).map(([k, v]) => `<button class="pal-item special" data-special="${k}" style="--c:${v.color}">${v.icon} ${v.label}</button>`).join('')}
+        </div>
+      </div>
+      <div class="sheet-list">${paletteListHtml(t)}</div>
+      <button class="btn small sheet-new" id="sheet-new-lesson">+ שיעור חדש למאגר</button>
+    </div>
+  </div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelectorAll('[data-close]').forEach((b) => (b.onclick = close));
+  root.querySelector('.sheet-backdrop').addEventListener('click', (e) => { if (e.target === e.currentTarget) close(); });
+  const list = root.querySelector('.sheet-list');
+  const search = root.querySelector('#sheet-search');
+  search.oninput = () => { view.search = search.value; list.innerHTML = paletteListHtml(t); };
+  root.querySelectorAll('.chip-btn').forEach((b) => (b.onclick = () => {
+    view.cat = b.dataset.cat;
+    root.querySelectorAll('.chip-btn').forEach((x) => x.classList.toggle('active', x === b));
+    list.innerHTML = paletteListHtml(t);
+  }));
+  root.querySelector('#sheet-new-lesson').onclick = () => { close(); lessonModal(); };
+  root.querySelector('.add-sheet').addEventListener('click', (e) => {
+    const item = e.target.closest('.pal-item');
+    if (!item) return;
+    let template, duration;
+    if (item.dataset.lesson) {
+      const l = data.lessons.get(item.dataset.lesson);
+      template = { type: 'lesson', lessonId: l.id }; duration = l.ideal;
+    } else {
+      template = { type: item.dataset.special }; duration = { meal: 60, break: 20, external: 120 }[item.dataset.special];
+    }
+    const s = snap(parseTime(root.querySelector('#add-start').value || fmtTime(start)));
+    const at = clamp(s, DAY_START, DAY_END - SNAP);
+    const dur = Math.min(duration, DAY_END - at);
+    const cur = data.trainings.get(t.id);
+    view.scrollToMin = at;
+    close();
+    save(cur, { blocks: [...cur.blocks, { id: uid(), ...template, dayId: day.id, start: at, duration: dur }] });
+    toast(`נוסף ב-${fmtTime(at)}`);
+  });
+}
+
 /* ---------- modals ---------- */
 function blockModal(t, b) {
   const l = b.type === 'lesson' ? data.lessons.get(b.lessonId) : null;
@@ -387,8 +532,8 @@ function blockModal(t, b) {
       <label>${l ? 'כותרת (ריק = שם השיעור)' : 'כותרת'}<input name="title" value="${esc(b.title || '')}" placeholder="${esc(l?.name || BLOCK_TYPES[b.type]?.label || '')}"></label>
       <div class="row">
         <label>יום<select name="day">${days.map((d, i) => `<option value="${d.id}" ${d.id === b.dayId ? 'selected' : ''}>יום ${i + 1} · ${fmtDate(d.date)}</option>`).join('')}</select></label>
-        <label>שעת התחלה<input name="start" type="time" step="600" value="${fmtTime(b.start)}"></label>
-        <label>משך (דק')<input name="duration" type="number" step="${SNAP}" min="${min}" max="${max}" value="${b.duration}"></label>
+        <label>שעת התחלה<span class="stepper"><button type="button" data-step="start:-10">−</button><input name="start" type="time" step="600" value="${fmtTime(b.start)}"><button type="button" data-step="start:10">+</button></span></label>
+        <label>משך (דק')<span class="stepper"><button type="button" data-step="duration:-10">−</button><input name="duration" type="number" inputmode="numeric" step="${SNAP}" min="${min}" max="${max}" value="${b.duration}"><button type="button" data-step="duration:10">+</button></span></label>
       </div>
       <label>מיקום (ריק = מיקום האימון)<input name="location" value="${esc(b.location || '')}"></label>
       <label>הערות (יופיעו ביומן של המתאמנים)<textarea name="notes" rows="2">${esc(b.notes || '')}</textarea></label>
@@ -408,6 +553,15 @@ function blockModal(t, b) {
     },
   });
   bindEquipmentEditor(form);
+  form.querySelectorAll('[data-step]').forEach((btn) => (btn.onclick = () => {
+    const [field, delta] = btn.dataset.step.split(':');
+    const input = form[field];
+    if (field === 'start') {
+      input.value = fmtTime(clamp(parseTime(input.value) + +delta, DAY_START, DAY_END - SNAP));
+    } else {
+      input.value = clamp((+input.value || 0) + +delta, min, max);
+    }
+  }));
   form.querySelector('#edit-lesson')?.addEventListener('click', (e) => { e.preventDefault(); form.close(); lessonModal(l); });
   form.querySelector('#del-block').onclick = () => {
     const cur = data.trainings.get(t.id);
