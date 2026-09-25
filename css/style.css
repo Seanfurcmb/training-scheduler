@@ -288,7 +288,7 @@ body.trainee { background: var(--bg); }
 
   .day-switch { padding: 6px 8px; gap: 6px; }
   .day-switch-label { flex: 1; border: 1px solid var(--border); background: var(--surface-2); border-radius: 8px; padding: 8px; font-weight: 700; font-size: 14px; }
-  .icon-btn.big { width: 40px; height: 40px; font-size: 26px; line-height: 1; border: 1px solid var(--border); }
+  .icon-btn.big { width: 40px; height: 40px; border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; padding: 0; }
   .icon-btn:disabled { opacity: .3; }
 
   .block { font-size: 13px; padding: 4px 8px; }

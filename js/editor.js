@@ -18,6 +18,10 @@ export const isDragging = () => !!drag;
 export const mobileQuery = window.matchMedia('(max-width: 800px)');
 const isMobile = () => mobileQuery.matches;
 const LONG_PRESS_MS = 350;
+// SVG chevrons: text arrows (‹ ›) get mirrored in RTL, these never do.
+const chevron = (d) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+const CHEVRON_RIGHT = chevron('M9 5l7 7-7 7');
+const CHEVRON_LEFT = chevron('M15 5l-7 7 7 7');
 
 // While a touch drag is active, stop the page from scrolling under the finger.
 document.addEventListener('touchmove', (e) => { if (drag?.armed) e.preventDefault(); }, { passive: false });
@@ -143,9 +147,9 @@ function renderSchedule(body, t) {
 
   const toolbar = mobile
     ? `<div class="board-toolbar day-switch">
-        <button class="icon-btn big" id="day-prev" ${dayIdx <= 0 ? 'disabled' : ''} title="היום הקודם">›</button>
+        <button class="icon-btn big" id="day-next" ${dayIdx >= days.length - 1 ? 'disabled' : ''} title="היום הבא" aria-label="היום הבא">${CHEVRON_RIGHT}</button>
         <button class="day-switch-label" id="day-label">${dayIdx >= 0 ? `יום ${dayIdx + 1}/${days.length} · ${fmtDate(days[dayIdx].date)}` : 'אין ימים'}</button>
-        <button class="icon-btn big" id="day-next" ${dayIdx >= days.length - 1 ? 'disabled' : ''} title="היום הבא">‹</button>
+        <button class="icon-btn big" id="day-prev" ${dayIdx <= 0 ? 'disabled' : ''} title="היום הקודם" aria-label="היום הקודם">${CHEVRON_LEFT}</button>
         <button class="btn small" id="add-day">+ יום</button>
       </div>`
     : `<div class="board-toolbar">
@@ -193,14 +197,14 @@ function renderSchedule(body, t) {
     body.querySelector('#day-next').onclick = () => go(dayIdx + 1);
     body.querySelector('#day-label').onclick = () => dayIdx >= 0 && dayModal(t, days[dayIdx]);
     body.querySelector('#fab-add')?.addEventListener('click', () => openAddSheet(t));
-    // Horizontal swipe switches days (RTL: swipe right = next day)
+    // Horizontal swipe switches days, matching the arrows: swipe left = next day
     const gs = body.querySelector('.grid-scroll');
     let sx = 0, sy = 0;
     gs.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
     gs.addEventListener('touchend', (e) => {
       if (drag) return;
       const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-      if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(dy)) go(dayIdx + (dx > 0 ? 1 : -1));
+      if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(dy)) go(dayIdx + (dx < 0 ? 1 : -1));
     });
   }
 
