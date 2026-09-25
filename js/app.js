@@ -1,7 +1,7 @@
 import { data, store, initStore, onChange } from './store.js';
 import { esc, ltr, durRange, uid, fmtDate, fmtDur, addDays, todayIso, CATEGORIES, defaultRange, snap, SNAP, byName, toast } from './util.js';
 import { openModal, confirmDialog } from './modal.js';
-import { KINDS, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel } from './equipment.js';
+import { KINDS, isKit, kitModal, itemLabel, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel } from './equipment.js';
 import { renderEditor, isDragging, mobileQuery } from './editor.js';
 
 const main = document.getElementById('main');
@@ -172,7 +172,7 @@ function renderLessons() {
         <td class="hide-m">${CATEGORIES[l.category]?.label || ''}</td>
         <td>${fmtDur(l.ideal)}</td>
         <td class="nowrap hide-m">${durRange(l.min, l.max)}</td>
-        <td class="eq-cell hide-m">${(l.equipment || []).map((r) => `<span class="chip">${esc(data.items.get(r.itemId)?.name || '?')} × ${rowLabel(r)}</span>`).join('') || '<span class="muted">—</span>'}</td>
+        <td class="eq-cell hide-m">${(l.equipment || []).map((r) => `<span class="chip">${esc(itemLabel(data.items.get(r.itemId)))} × ${rowLabel(r)}</span>`).join('') || '<span class="muted">—</span>'}</td>
         <td class="nowrap actions-cell"><button class="btn small" data-act="edit">עריכה</button> <button class="btn small danger" data-act="del">מחיקה</button></td>
       </tr>`).join('')}</tbody>
     </table>
@@ -235,21 +235,44 @@ export function lessonModal(lesson) {
 function renderItems() {
   const usage = new Map();
   for (const l of data.lessons.values()) for (const r of l.equipment || []) usage.set(r.itemId, (usage.get(r.itemId) || 0) + 1);
-  const list = [...data.items.values()].sort(byName);
+  const inKits = new Map();
+  const kits = [...data.items.values()].filter(isKit).sort(byName);
+  for (const k of kits) for (const c of k.components || []) inKits.set(c.itemId, [...(inKits.get(c.itemId) || []), k.name]);
+  const list = [...data.items.values()].filter((i) => !isKit(i)).sort(byName);
   main.innerHTML = `<div class="page">
-    <div class="page-head"><h1>מאגר ציוד</h1><button class="btn primary" id="new-item">+ פריט חדש</button></div>
+    <div class="page-head"><h1>ערכות</h1><button class="btn primary" id="new-kit">+ ערכה חדשה</button></div>
+    <p class="hint">ערכה היא קבוצת פריטים, למשל ערכת וריד. בשיעור בוחרים את הערכה, וברשימת האריזה היא מתפרקת לפריטים שלה.</p>
+    ${kits.length ? `<div class="cards kit-cards">${kits.map((k) => `<div class="card kit-card" data-id="${k.id}">
+        <div class="card-main"><h3>🧰 ${esc(k.name)}</h3>
+          <div class="kit-items">${(k.components || []).map((c) => `<span class="chip">${esc(data.items.get(c.itemId)?.name || '?')} ×${c.qty}</span>`).join('')}</div>
+          <div class="muted">בשימוש ב-${usage.get(k.id) || 0} שיעורים</div></div>
+        <div class="card-actions"><button class="btn small" data-act="edit">עריכה</button><button class="btn small danger" data-act="del">מחיקה</button></div>
+      </div>`).join('')}</div>` : '<p class="empty">אין עדיין ערכות.</p>'}
+
+    <div class="page-head section-gap"><h1>פריטים</h1><button class="btn primary" id="new-item">+ פריט חדש</button></div>
     <p class="hint">רב-פעמי: בסיכום נלקחת הכמות הגדולה ביותר שנדרשת במשבצת אחת (בובה שמשמשת בכמה שיעורים נספרת פעם אחת).
       מתכלה: הכמויות מכל המשבצות מצטברות.</p>
-    ${list.length ? '' : '<p class="empty">אין עדיין פריטים. הם נוצרים אוטומטית כשמוסיפים ציוד לשיעור, או כאן.</p>'}
-    <table class="table">
-      <thead><tr><th>פריט</th><th>סוג</th><th>בשימוש בשיעורים</th><th></th></tr></thead>
+    ${list.length ? '' : '<p class="empty">אין עדיין פריטים. הם נוצרים אוטומטית כשמוסיפים ציוד לשיעור או לערכה, או כאן.</p>'}
+    <table class="table items-table">
+      <thead><tr><th>פריט</th><th>סוג</th><th>בשיעורים</th><th class="hide-m">בערכות</th><th></th></tr></thead>
       <tbody>${list.map((i) => `<tr data-id="${i.id}">
         <td><input class="inline-input" data-f="name" value="${esc(i.name)}"></td>
         <td><select data-f="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${i.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
         <td>${usage.get(i.id) || 0}</td>
+        <td class="hide-m muted">${esc((inKits.get(i.id) || []).join(', '))}</td>
         <td><button class="btn small danger" data-act="del">מחיקה</button></td>
       </tr>`).join('')}</tbody>
     </table></div>`;
+  main.querySelector('#new-kit').onclick = () => kitModal(openModal);
+  main.querySelectorAll('.kit-card').forEach((card) => {
+    const kit = data.items.get(card.dataset.id);
+    card.querySelector('[data-act=edit]').onclick = () => kitModal(openModal, kit);
+    card.querySelector('[data-act=del]').onclick = async () => {
+      const n = usage.get(kit.id) || 0;
+      if (!(await confirmDialog(`למחוק את הערכה "${kit.name}"?${n ? ` היא תוסר מ-${n} שיעורים.` : ''} הפריטים עצמם יישארו במאגר.`))) return;
+      await removeItemEverywhere(kit.id);
+    };
+  });
   main.querySelector('#new-item').onclick = () => openModal({
     title: 'פריט חדש',
     body: `<label>שם<input name="name" required></label>
@@ -266,14 +289,23 @@ function renderItems() {
       store.put('items', { ...item, [el.dataset.f]: v });
     }));
     tr.querySelector('[data-act=del]').onclick = async () => {
-      const n = usage.get(item.id) || 0;
-      if (!(await confirmDialog(`למחוק את "${item.name}"?${n ? ` הפריט יוסר מ-${n} שיעורים.` : ''}`))) return;
-      for (const l of data.lessons.values()) {
-        if ((l.equipment || []).some((r) => r.itemId === item.id)) await store.put('lessons', { ...l, equipment: l.equipment.filter((r) => r.itemId !== item.id) });
-      }
-      store.remove('items', item.id);
+      const n = usage.get(item.id) || 0, k = (inKits.get(item.id) || []).length;
+      const where = [n && `מ-${n} שיעורים`, k && `מ-${k} ערכות`].filter(Boolean).join(' ו');
+      if (!(await confirmDialog(`למחוק את "${item.name}"?${where ? ` הפריט יוסר ${where}.` : ''}`))) return;
+      await removeItemEverywhere(item.id);
     };
   });
+}
+
+// Deletes an item/kit and strips it from lessons and from kits that contain it.
+async function removeItemEverywhere(id) {
+  for (const l of data.lessons.values()) {
+    if ((l.equipment || []).some((r) => r.itemId === id)) await store.put('lessons', { ...l, equipment: l.equipment.filter((r) => r.itemId !== id) });
+  }
+  for (const kit of [...data.items.values()].filter(isKit)) {
+    if ((kit.components || []).some((c) => c.itemId === id)) await store.put('items', { ...kit, components: kit.components.filter((c) => c.itemId !== id) });
+  }
+  await store.remove('items', id);
 }
 
 /* ---------- staff (firebase only) ---------- */

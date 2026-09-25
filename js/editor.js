@@ -5,7 +5,7 @@ import {
   DAY_START, DAY_END, SNAP, DEFAULT_APPEND_START, CATEGORIES, BLOCK_TYPES,
 } from './util.js';
 import { openModal, confirmDialog } from './modal.js';
-import { summarize, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel, KINDS } from './equipment.js';
+import { summarize, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel, itemLabel, KINDS } from './equipment.js';
 import { buildIcs, googleLink } from './ics.js';
 import { encodeShare } from './share.js';
 import { flushRender, lessonModal } from './app.js';
@@ -542,7 +542,7 @@ function blockModal(t, b) {
       <label>מיקום (ריק = מיקום האימון)<input name="location" value="${esc(b.location || '')}"></label>
       <label>הערות (יופיעו ביומן של המתאמנים)<textarea name="notes" rows="2">${esc(b.notes || '')}</textarea></label>
       <h3>ציוד נוסף למשבצת הזו</h3>
-      ${l && l.equipment?.length ? `<p class="muted">מהשיעור: ${l.equipment.map((r) => `${esc(data.items.get(r.itemId)?.name || '?')} × ${rowLabel(r)}`).join(', ')}</p>` : ''}
+      ${l && l.equipment?.length ? `<p class="muted">מהשיעור: ${l.equipment.map((r) => `${esc(itemLabel(data.items.get(r.itemId)))} × ${rowLabel(r)}`).join(', ')}</p>` : ''}
       ${equipmentEditorHtml(b.equipment || [])}`,
     extraButtons: `<button type="button" class="btn danger" id="del-block">מחיקה</button><button type="button" class="btn" id="dup-block">שכפול</button>`,
     onSave: async (f) => {

@@ -116,6 +116,9 @@ input[type=color] { padding: 2px; height: 34px; width: 60px; }
 .eq-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .eq-row .eq-name { flex: 1; min-width: 160px; }
 .eq-row .eq-qty, .eq-row .eq-per-n { width: 64px; }
+.section-gap { margin-top: 32px; }
+.kit-items { margin: 4px 0 6px; }
+.kit-cards { margin-bottom: 8px; }
 .eq-per { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
 
 /* toast */
