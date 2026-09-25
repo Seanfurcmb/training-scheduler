@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only emails listed in the "staff" collection (doc id = lowercase email) may read or write.
+    function isStaff() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/staff/$(request.auth.token.email.lower()));
+    }
+    match /{coll}/{id} {
+      allow read, write: if isStaff() && coll in ['lessons', 'items', 'trainings', 'staff'];
+    }
+  }
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>בונה לו"ז אימונים</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📋 בונה לו"ז אימונים</div>
+    <nav class="nav" id="nav">
+      <a href="#/trainings" data-route="trainings">אימונים</a>
+      <a href="#/lessons" data-route="lessons">מאגר שיעורים</a>
+      <a href="#/items" data-route="items">ציוד</a>
+      <a href="#/staff" data-route="staff" class="firebase-only" hidden>צוות</a>
+    </nav>
+    <div class="user" id="user"></div>
+  </header>
+  <main id="main"><div class="loading">טוען…</div></main>
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
