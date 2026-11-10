@@ -9,6 +9,7 @@ import { summarize, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEdito
 import { buildIcs, googleLink } from './ics.js';
 import { encodeShare } from './share.js';
 import { flushRender, lessonModal } from './app.js';
+import { isTemplate, templateDate } from './templates.js';
 
 const view = { ppm: 1.4, search: '', cat: '', selectedDay: null, scroll: null, trainingId: null, scrollToMin: null };
 let drag = null;
@@ -44,6 +45,10 @@ function blockRange(b) {
   return l ? [l.min, l.max] : [SNAP, DAY_END - DAY_START];
 }
 const sortedDays = (t) => [...t.days].sort((a, b) => a.date.localeCompare(b.date));
+// Generic trainings have placeholder dates, so their days are just "יום N".
+const dayIndex = (t, d) => sortedDays(t).findIndex((x) => x.id === d.id) + 1;
+const dayName = (t, d) => (isTemplate(t) ? `יום ${dayIndex(t, d)}` : `יום ${dayIndex(t, d)} · ${fmtDate(d.date)}`);
+const dayShort = (t, d) => (isTemplate(t) ? `יום ${dayIndex(t, d)}` : fmtDate(d.date));
 
 function save(t, patch) {
   const next = { ...t, ...patch };
@@ -84,13 +89,17 @@ export function renderEditor(main, t, tab) {
   view.trainingId = t.id;
   if (!t.days.some((d) => d.id === view.selectedDay)) view.selectedDay = sortedDays(t)[0]?.id || null;
 
-  const tabs = [['schedule', 'לו"ז'], ['equipment', 'ציוד'], ['share', 'שליחה למתאמנים']];
+  const tpl = isTemplate(t);
+  const tabs = [['schedule', 'לו"ז'], ['equipment', 'ציוד'], ...(tpl ? [] : [['share', 'שליחה למתאמנים']])];
+  if (tpl && tab === 'share') tab = 'schedule';
   main.innerHTML = `<div class="editor">
     <div class="editor-head">
-      <a href="#/trainings" class="back" title="חזרה לאימונים">→<span class="desktop-only"> אימונים</span></a>
+      <a href="${tpl ? '#/templates' : '#/trainings'}" class="back" title="חזרה">→<span class="desktop-only"> ${tpl ? 'גנריים' : 'אימונים'}</span></a>
+      ${tpl ? `<span class="badge tpl" title="אימון גנרי: בלי תאריכים, משמש בסיס לאימונים">גנרי${t.frame ? ' · ' + esc(t.frame) : ''}</span>` : ''}
       <input class="title-input" id="t-name" value="${esc(t.name)}" aria-label="שם האימון">
       <label class="inline desktop-only">מתאמנים <input id="t-trainees" type="number" min="1" value="${t.trainees}"></label>
-      <label class="inline desktop-only">מיקום <input id="t-location" value="${esc(t.location || '')}" placeholder="—"></label>
+      ${tpl ? `<label class="inline desktop-only">מסגרת <input id="t-frame" value="${esc(t.frame || '')}" placeholder="—"></label>`
+    : `<label class="inline desktop-only">מיקום <input id="t-location" value="${esc(t.location || '')}" placeholder="—"></label>`}
       <button class="icon-btn mobile-only" id="t-settings" title="פרטי האימון">⚙️</button>
       <nav class="tabs">${tabs.map(([k, v]) => `<a href="#/training/${t.id}/${k}" class="${tab === k ? 'active' : ''}">${v}</a>`).join('')}</nav>
     </div>
@@ -98,17 +107,19 @@ export function renderEditor(main, t, tab) {
   </div>`;
   main.querySelector('#t-name').onchange = (e) => e.target.value.trim() && save(t, { name: e.target.value.trim() });
   main.querySelector('#t-trainees').onchange = (e) => save(t, { trainees: Math.max(1, +e.target.value || 1) });
-  main.querySelector('#t-location').onchange = (e) => save(t, { location: e.target.value.trim() });
+  main.querySelector('#t-location')?.addEventListener('change', (e) => save(t, { location: e.target.value.trim() }));
+  main.querySelector('#t-frame')?.addEventListener('change', (e) => save(t, { frame: e.target.value.trim() }));
   main.querySelector('#t-settings').onclick = () => openModal({
     title: 'פרטי האימון',
     body: `<label>שם<input name="name" value="${esc(t.name)}"></label>
       <div class="row">
         <label>מספר מתאמנים<input name="trainees" type="number" inputmode="numeric" min="1" value="${t.trainees}"></label>
-        <label>מיקום<input name="location" value="${esc(t.location || '')}"></label>
+        ${tpl ? `<label>סוג מסגרת<input name="frame" value="${esc(t.frame || '')}"></label>` : `<label>מיקום<input name="location" value="${esc(t.location || '')}"></label>`}
       </div>`,
     onSave: (f) => {
       const cur = data.trainings.get(t.id);
-      save(cur, { name: f.name.value.trim() || cur.name, trainees: Math.max(1, +f.trainees.value || 1), location: f.location.value.trim() });
+      save(cur, { name: f.name.value.trim() || cur.name, trainees: Math.max(1, +f.trainees.value || 1),
+        ...(tpl ? { frame: f.frame.value.trim() } : { location: f.location.value.trim() }) });
     },
   });
 
@@ -119,6 +130,19 @@ export function renderEditor(main, t, tab) {
 }
 
 /* ---------- schedule board ---------- */
+// Content that didn't fit when the training was built from a generic one
+function pendingHtml(t) {
+  const list = t.unscheduled || [];
+  if (!list.length) return '';
+  return `<div class="pending">
+    <div class="pending-title">ממתינים לשיבוץ (${list.length})</div>
+    ${list.map((b, i) => `<div class="pal-item pending-item" data-pending="${i}" style="--c:${blockColor(b)}" title="גררו ללו&quot;ז, או לחצו להוספה בסוף היום הנבחר">
+      <div class="pal-name">${esc(blockTitle(b))}</div>
+      <div class="pal-meta">${fmtDur(b.duration)}<button type="button" class="pend-del" title="לוותר על התוכן הזה">✕</button></div>
+    </div>`).join('')}
+  </div>`;
+}
+
 function paletteListHtml(t) {
   const q = view.search.trim();
   const used = new Map();
@@ -148,7 +172,7 @@ function renderSchedule(body, t) {
   const toolbar = mobile
     ? `<div class="board-toolbar day-switch">
         <button class="icon-btn big" id="day-next" ${dayIdx >= days.length - 1 ? 'disabled' : ''} title="היום הבא" aria-label="היום הבא">${CHEVRON_RIGHT}</button>
-        <button class="day-switch-label" id="day-label">${dayIdx >= 0 ? `יום ${dayIdx + 1}/${days.length} · ${fmtDate(days[dayIdx].date)}` : 'אין ימים'}</button>
+        <button class="day-switch-label" id="day-label">${dayIdx >= 0 ? `יום ${dayIdx + 1}/${days.length}${isTemplate(t) ? '' : ' · ' + fmtDate(days[dayIdx].date)}` : 'אין ימים'}</button>
         <button class="icon-btn big" id="day-prev" ${dayIdx <= 0 ? 'disabled' : ''} title="היום הקודם" aria-label="היום הקודם">${CHEVRON_LEFT}</button>
         <button class="btn small" id="add-day">+ יום</button>
       </div>`
@@ -170,6 +194,7 @@ function renderSchedule(body, t) {
       <div class="pal-special">
         ${Object.entries(BLOCK_TYPES).map(([k, v]) => `<div class="pal-item special" data-special="${k}" style="--c:${v.color}">${v.icon} ${v.label}</div>`).join('')}
       </div>
+      ${pendingHtml(t)}
       <div class="palette-list">${paletteListHtml(t)}</div>
       <button class="btn small" id="new-lesson">+ שיעור חדש למאגר</button>
     </aside>
@@ -225,7 +250,13 @@ function renderSchedule(body, t) {
   body.querySelector('.palette').addEventListener('pointerdown', (e) => {
     const item = e.target.closest('.pal-item');
     if (!item || e.button !== 0) return;
-    if (item.dataset.lesson) {
+    if (item.dataset.pending != null) {
+      const i = +item.dataset.pending;
+      if (e.target.closest('.pend-del')) { e.preventDefault(); discardPending(t, i); return; }
+      const b = t.unscheduled[i];
+      const { duration, ...template } = b;
+      beginDrag(e, t, { kind: 'new', template, duration, pendingIdx: i, title: blockTitle(b), color: blockColor(b) });
+    } else if (item.dataset.lesson) {
       const l = data.lessons.get(item.dataset.lesson);
       beginDrag(e, t, { kind: 'new', template: { type: 'lesson', lessonId: l.id }, duration: l.ideal, title: l.name, color: item.style.getPropertyValue('--c') });
     } else {
@@ -291,7 +322,7 @@ function dayColumnHtml(t, d, height) {
   const idx = sortedDays(t).indexOf(d) + 1;
   return `<div class="day-col ${view.selectedDay === d.id ? 'selected' : ''}" data-day="${d.id}">
     <div class="col-head">
-      <button class="day-date" title="שינוי תאריך / מחיקת יום">יום ${idx} · ${fmtDate(d.date)}</button>
+      <button class="day-date" title="${isTemplate(t) ? 'מחיקת יום' : 'שינוי תאריך / מחיקת יום'}">${esc(dayName(t, d))}</button>
       <div class="day-meta">${blocks.length ? `${ltr(timeRange(first, last))} · תוכן ${fmtDur(content)}` : 'ריק'}</div>
     </div>
     <div class="day-body" style="height:${height}px">
@@ -446,7 +477,7 @@ function onUp() {
       save(t, { blocks: t.blocks.map((b) => (b.id === d.block.id ? { ...b, ...d.target } : b)) });
     } else {
       view.selectedDay = d.target.dayId;
-      save(t, { blocks: [...t.blocks, { id: uid(), ...d.template, ...d.target, duration: d.duration }] });
+      addBlock(t, { ...d.template, ...d.target, duration: d.duration }, d.pendingIdx);
     }
   }
   flushRender();
@@ -458,8 +489,22 @@ function appendToSelectedDay(t, d) {
   const dayBlocks = t.blocks.filter((b) => b.dayId === day.id);
   const start = dayBlocks.length ? Math.max(...dayBlocks.map((b) => b.start + b.duration)) : DEFAULT_APPEND_START;
   if (start + d.duration > DAY_END) { toast('אין מספיק מקום בסוף היום הזה'); return; }
-  save(t, { blocks: [...t.blocks, { id: uid(), ...d.template, dayId: day.id, start, duration: d.duration }] });
-  toast(`נוסף ל${fmtDate(day.date)} ב-${fmtTime(start)}`);
+  addBlock(t, { ...d.template, dayId: day.id, start, duration: d.duration }, d.pendingIdx);
+  toast(`נוסף ל${dayShort(t, day)} ב-${fmtTime(start)}`);
+}
+
+/** Adds a block; when it came from the "waiting" list, removes it from there in the same save. */
+function addBlock(t, block, pendingIdx) {
+  const patch = { blocks: [...t.blocks, { ...block, id: uid() }] };
+  if (pendingIdx != null) patch.unscheduled = (t.unscheduled || []).filter((_, i) => i !== pendingIdx);
+  save(t, patch);
+}
+
+async function discardPending(t, i) {
+  const b = t.unscheduled[i];
+  if (!(await confirmDialog(`לוותר על "${blockTitle(b)}" באימון הזה?`, 'הסרה'))) return;
+  const cur = data.trainings.get(t.id);
+  save(cur, { unscheduled: cur.unscheduled.filter((_, j) => j !== i) });
 }
 
 const dayEnd = (t, dayId) => {
@@ -475,7 +520,7 @@ function openAddSheet(t) {
   const start = Math.min(dayEnd(t, day.id), DAY_END - SNAP);
   root.innerHTML = `<div class="modal-backdrop sheet-backdrop">
     <div class="modal sheet add-sheet">
-      <header><h2>הוספה ל${esc(fmtDate(day.date))}</h2><button type="button" class="icon-btn" data-close>✕</button></header>
+      <header><h2>הוספה ל${esc(dayShort(t, day))}</h2><button type="button" class="icon-btn" data-close>✕</button></header>
       <div class="sheet-controls">
         <label class="inline">שעת התחלה <input type="time" step="600" id="add-start" value="${fmtTime(start)}"></label>
         <input type="search" id="sheet-search" placeholder="חיפוש שיעור…" value="${esc(view.search)}">
@@ -487,7 +532,7 @@ function openAddSheet(t) {
           ${Object.entries(BLOCK_TYPES).map(([k, v]) => `<button class="pal-item special" data-special="${k}" style="--c:${v.color}">${v.icon} ${v.label}</button>`).join('')}
         </div>
       </div>
-      <div class="sheet-list">${paletteListHtml(t)}</div>
+      <div class="sheet-list">${pendingHtml(t)}${paletteListHtml(t)}</div>
       <button class="btn small sheet-new" id="sheet-new-lesson">+ שיעור חדש למאגר</button>
     </div>
   </div>`;
@@ -506,8 +551,12 @@ function openAddSheet(t) {
   root.querySelector('.add-sheet').addEventListener('click', (e) => {
     const item = e.target.closest('.pal-item');
     if (!item) return;
-    let template, duration;
-    if (item.dataset.lesson) {
+    if (item.dataset.pending != null && e.target.closest('.pend-del')) { close(); discardPending(t, +item.dataset.pending); return; }
+    let template, duration, pendingIdx;
+    if (item.dataset.pending != null) {
+      pendingIdx = +item.dataset.pending;
+      ({ duration, ...template } = t.unscheduled[pendingIdx]);
+    } else if (item.dataset.lesson) {
       const l = data.lessons.get(item.dataset.lesson);
       template = { type: 'lesson', lessonId: l.id }; duration = l.ideal;
     } else {
@@ -519,7 +568,7 @@ function openAddSheet(t) {
     const cur = data.trainings.get(t.id);
     view.scrollToMin = at;
     close();
-    save(cur, { blocks: [...cur.blocks, { id: uid(), ...template, dayId: day.id, start: at, duration: dur }] });
+    addBlock(cur, { ...template, dayId: day.id, start: at, duration: dur }, pendingIdx);
     toast(`נוסף ב-${fmtTime(at)}`);
   });
 }
@@ -535,7 +584,7 @@ function blockModal(t, b) {
         · <a href="#" id="edit-lesson">עריכת השיעור במאגר</a></p>` : ''}
       <label>${l ? 'כותרת (ריק = שם השיעור)' : 'כותרת'}<input name="title" value="${esc(b.title || '')}" placeholder="${esc(l?.name || BLOCK_TYPES[b.type]?.label || '')}"></label>
       <div class="row">
-        <label>יום<select name="day">${days.map((d, i) => `<option value="${d.id}" ${d.id === b.dayId ? 'selected' : ''}>יום ${i + 1} · ${fmtDate(d.date)}</option>`).join('')}</select></label>
+        <label>יום<select name="day">${days.map((d, i) => `<option value="${d.id}" ${d.id === b.dayId ? 'selected' : ''}>${esc(dayName(t, d))}</option>`).join('')}</select></label>
         <label>שעת התחלה<span class="stepper"><button type="button" data-step="start:-10">−</button><input name="start" type="time" step="600" value="${fmtTime(b.start)}"><button type="button" data-step="start:10">+</button></span></label>
         <label>משך (דק')<span class="stepper"><button type="button" data-step="duration:-10">−</button><input name="duration" type="number" inputmode="numeric" step="${SNAP}" min="${min}" max="${max}" value="${b.duration}"><button type="button" data-step="duration:10">+</button></span></label>
       </div>
@@ -585,6 +634,12 @@ function blockModal(t, b) {
 
 function addDayModal(t) {
   const last = sortedDays(t).at(-1)?.date;
+  if (isTemplate(t)) {
+    // generic: just append the next placeholder day
+    const id = uid(); view.selectedDay = id;
+    save(t, { days: [...t.days, { id, date: last ? addDays(last, 1) : templateDate(0) }] });
+    return;
+  }
   openModal({
     title: 'הוספת יום',
     body: `<label>תאריך<input name="date" type="date" value="${last ? addDays(last, 1) : new Date().toISOString().slice(0, 10)}" required></label>`,
@@ -600,6 +655,13 @@ function addDayModal(t) {
 
 function dayModal(t, day) {
   const n = t.blocks.filter((b) => b.dayId === day.id).length;
+  const removeDay = async () => {
+    if (await confirmDialog(`למחוק את ${dayName(t, day)}${n ? ` ואת ${n} המשבצות שבו` : ''}?`)) {
+      const cur = data.trainings.get(t.id);
+      save(cur, { days: cur.days.filter((d) => d.id !== day.id), blocks: cur.blocks.filter((b) => b.dayId !== day.id) });
+    }
+  };
+  if (isTemplate(t)) return removeDay();
   const form = openModal({
     title: `יום ${fmtDate(day.date)}`,
     body: `<label>תאריך<input name="date" type="date" value="${day.date}" required></label>
@@ -611,12 +673,7 @@ function dayModal(t, day) {
       save(t, { days: t.days.map((d) => (d.id === day.id ? { ...d, date: f.date.value } : d)) });
     },
   });
-  form.querySelector('#del-day').onclick = async () => {
-    form.close();
-    if (await confirmDialog(`למחוק את היום${n ? ` ואת ${n} המשבצות שבו` : ''}?`)) {
-      save(t, { days: t.days.filter((d) => d.id !== day.id), blocks: t.blocks.filter((b) => b.dayId !== day.id) });
-    }
-  };
+  form.querySelector('#del-day').onclick = () => { form.close(); removeDay(); };
 }
 
 /* ---------- equipment tab ---------- */
@@ -648,7 +705,7 @@ function renderEquipment(body, t) {
       ${listHtml(sum.total, true)}
     </section>
     ${sum.days.length > 1 ? `<h2>לפי ימים</h2><div class="eq-days">${sum.days.map(({ day, list }, i) => `
-      <section><h3>יום ${i + 1} · ${fmtDate(day.date)}</h3>${listHtml(list, false)}</section>`).join('')}</div>` : ''}
+      <section><h3>${esc(dayName(t, day))}</h3>${listHtml(list, false)}</section>`).join('')}</div>` : ''}
   </div>`;
   body.querySelectorAll('input[data-item]').forEach((cb) => (cb.onchange = () => {
     const cur = data.trainings.get(t.id);

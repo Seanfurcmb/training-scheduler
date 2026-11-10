@@ -117,6 +117,13 @@ input[type=color] { padding: 2px; height: 34px; width: 60px; }
 .eq-row .eq-name { flex: 1; min-width: 160px; }
 .eq-row .eq-qty, .eq-row .eq-per-n { width: 64px; }
 .section-gap { margin-top: 32px; }
+.badge.tpl { background: #ede9fe; color: #5b21b6; white-space: nowrap; }
+.pending { border: 1px dashed #f59e0b; background: #fffbeb; border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 4px; max-height: 40%; overflow-y: auto; }
+.pending-title { font-size: 12px; font-weight: 700; color: #92400e; padding: 0 2px; }
+.pend-del { margin-inline-start: auto; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 4px; }
+.pend-del:hover { color: var(--danger); }
+.backup-actions { align-items: center; margin-bottom: 8px; }
+.backup-actions label.btn { cursor: pointer; }
 .kit-items { margin: 4px 0 6px; }
 .kit-cards { margin-bottom: 8px; }
 .eq-per { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }

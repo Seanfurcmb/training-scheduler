@@ -7,7 +7,7 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/staff/$(request.auth.token.email.lower()));
     }
     match /{coll}/{id} {
-      allow read, write: if isStaff() && coll in ['lessons', 'items', 'trainings', 'staff'];
+      allow read, write: if isStaff() && coll in ['lessons', 'items', 'trainings', 'staff', 'backups'];
     }
   }
 }

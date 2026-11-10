@@ -1,5 +1,6 @@
-import { data, store, initStore, onChange } from './store.js';
-import { esc, ltr, durRange, uid, fmtDate, fmtDur, addDays, todayIso, CATEGORIES, defaultRange, snap, SNAP, byName, toast } from './util.js';
+import { data, store, initStore, onChange, exportAll, restoreAll } from './store.js';
+import { esc, ltr, durRange, uid, fmtDate, fmtDur, addDays, todayIso, CATEGORIES, defaultRange, snap, SNAP, byName, toast, download } from './util.js';
+import { isTemplate, templateDate, fitTemplate, templateStats } from './templates.js';
 import { openModal, confirmDialog } from './modal.js';
 import { KINDS, isKit, kitModal, itemLabel, equipmentEditorHtml, bindEquipmentEditor, readEquipmentEditor, rowLabel } from './equipment.js';
 import { renderEditor, isDragging, mobileQuery } from './editor.js';
@@ -22,16 +23,18 @@ export function render() {
   if (store.status === 'signed-out') return renderSignIn();
   if (store.status === 'denied') return renderDenied();
   const r = route();
-  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === (r.name === 'training' ? 'trainings' : r.name)));
+  const navRoute = r.name === 'training' ? (isTemplate(data.trainings.get(r.id)) ? 'templates' : 'trainings') : r.name;
+  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === navRoute));
   switch (r.name) {
     case 'training': {
       const t = data.trainings.get(r.id);
       if (!t) { location.hash = '#/trainings'; return; }
       return renderEditor(main, t, r.tab || 'schedule');
     }
+    case 'templates': return renderTemplates();
     case 'lessons': return renderLessons();
     case 'items': return renderItems();
-    case 'staff': return renderStaff();
+    case 'staff': return renderAdmin();
     default: return renderTrainings();
   }
 }
@@ -55,7 +58,7 @@ function renderSignIn() {
 }
 function renderDenied() {
   main.innerHTML = `<div class="center-card"><h1>אין הרשאה</h1>
-    <p>החשבון <b dir="ltr">${esc(store.user?.email)}</b> לא נמצא ברשימת הצוות.<br>בקשו ממדריך קיים להוסיף אתכם במסך "צוות".</p>
+    <p>החשבון <b dir="ltr">${esc(store.user?.email)}</b> לא נמצא ברשימת הצוות.<br>בקשו ממדריך קיים להוסיף אתכם במסך "ניהול".</p>
     <button class="btn" id="signout2">התחברות עם חשבון אחר</button></div>`;
   main.querySelector('#signout2').onclick = () => store.signOut();
 }
@@ -69,7 +72,7 @@ function trainingRange(t) {
 }
 
 function renderTrainings() {
-  const list = [...data.trainings.values()].sort((a, b) => {
+  const list = [...data.trainings.values()].filter((t) => !isTemplate(t)).sort((a, b) => {
     const da = a.days.map((d) => d.date).sort()[0] || '', db = b.days.map((d) => d.date).sort()[0] || '';
     return db.localeCompare(da);
   });
@@ -85,6 +88,7 @@ function renderTrainings() {
         </a>
         <div class="card-actions">
           <button class="btn small" data-act="dup">שכפול</button>
+          <button class="btn small" data-act="tpl" title="שמירת האימון כבסיס לאימונים הבאים">שמירה כגנרי</button>
           <button class="btn small danger" data-act="del">מחיקה</button>
         </div>
       </div>`).join('')}</div>
@@ -93,33 +97,161 @@ function renderTrainings() {
   main.querySelectorAll('.training-card').forEach((card) => {
     const t = data.trainings.get(card.dataset.id);
     card.querySelector('[data-act=dup]').onclick = () => duplicateModal(t);
+    card.querySelector('[data-act=tpl]').onclick = () => saveAsTemplateModal(t);
     card.querySelector('[data-act=del]').onclick = async () => {
       if (await confirmDialog(`למחוק את "${t.name}"?`)) store.remove('trainings', t.id);
     };
   });
 }
 
-function trainingModal() {
-  openModal({
-    title: 'אימון חדש',
-    body: `<label>שם האימון<input name="name" required placeholder="שם האימון"></label>
+const templatesList = () => [...data.trainings.values()].filter(isTemplate)
+  .sort((a, b) => (a.frame || '').localeCompare(b.frame || '', 'he') || byName(a, b));
+
+function trainingModal(baseId = '') {
+  const tpls = templatesList();
+  const base = data.trainings.get(baseId);
+  const form = openModal({
+    title: base ? `אימון חדש מ"${base.name}"` : 'אימון חדש',
+    body: `<label>בסיס<select name="base">
+        <option value="">אימון ריק</option>
+        ${tpls.map((t) => `<option value="${t.id}" ${t.id === baseId ? 'selected' : ''}>גנרי: ${esc(t.name)}${t.frame ? ` (${esc(t.frame)})` : ''} · ${t.days.length} ימים</option>`).join('')}
+      </select></label>
+      <label>שם האימון<input name="name" required placeholder="שם האימון" value="${base ? esc(base.name) : ''}"></label>
       <div class="row">
-        <label>מספר מתאמנים<input name="trainees" type="number" min="1" value="20"></label>
-        <label>מיקום<input name="location" placeholder="אופציונלי"></label>
+        <label>מספר מתאמנים<input name="trainees" type="number" min="1" value="${base?.trainees || 20}"></label>
+        <label>מיקום<input name="location" placeholder="אופציונלי" value="${esc(base?.location || '')}"></label>
       </div>
       <div class="row">
         <label>תאריך יום ראשון<input name="date" type="date" value="${todayIso()}" required></label>
-        <label>מספר ימים רצופים<input name="days" type="number" min="1" max="30" value="1"></label>
+        <label>מספר ימים רצופים<input name="days" type="number" min="1" max="30" value="${base?.days.length || 1}"></label>
       </div>
-      <p class="hint">למפגשים לא רצופים: צרו יום אחד והוסיפו תאריכים נוספים מתוך הלו"ז.</p>`,
+      <p class="hint" id="fit-hint"></p>
+      <p class="hint">למפגשים לא רצופים: אחרי היצירה לוחצים על תאריך של יום ומשנים אותו.</p>`,
     saveLabel: 'יצירה',
     onSave: async (f) => {
       const name = f.name.value.trim();
       if (!name || !f.date.value) { toast('צריך שם ותאריך'); return false; }
-      const days = Array.from({ length: Math.max(1, +f.days.value || 1) }, (_, i) => ({ id: uid(), date: addDays(f.date.value, i) }));
+      const n = Math.max(1, +f.days.value || 1);
+      const days = Array.from({ length: n }, (_, i) => ({ id: uid(), date: addDays(f.date.value, i) }));
       const t = { id: uid(), name, trainees: Math.max(1, +f.trainees.value || 1), location: f.location.value.trim(),
         days, blocks: [], extras: [], packed: {}, includeMeals: true, createdAt: Date.now() };
+      const tpl = data.trainings.get(f.base.value);
+      if (tpl) {
+        const fit = fitTemplate(tpl, n);
+        t.blocks = fit.days.flatMap((list, i) => list.map((b) => ({ ...structuredClone(b), id: uid(), dayId: days[i].id })));
+        t.unscheduled = fit.unscheduled.map((b) => ({ ...structuredClone(b), id: uid() }));
+        t.extras = structuredClone(tpl.extras || []);
+        t.templateId = tpl.id;
+        if (t.unscheduled.length) toast(`${t.unscheduled.length} תכנים לא נכנסו ומחכים לשיבוץ בצד הלו"ז`);
+      }
       await store.put('trainings', t);
+      location.hash = `#/training/${t.id}`;
+    },
+  });
+  // live preview of how the generic training will fit
+  const hint = form.querySelector('#fit-hint');
+  const update = () => {
+    const tpl = data.trainings.get(form.base.value);
+    if (!tpl) { hint.textContent = ''; return; }
+    const n = Math.max(1, +form.days.value || 1);
+    const fit = fitTemplate(tpl, n);
+    const s = templateStats(tpl);
+    const how = n === tpl.days.length ? 'יועתק כמו שהוא' : n < tpl.days.length ? 'יכווץ' : 'יפוזר על יותר ימים';
+    hint.textContent = `הגנרי בנוי ל-${tpl.days.length} ימים (${s.lessons} תכנים, ${fmtDur(s.minutes)}) ו${how}.`
+      + (fit.unscheduled.length ? ` ${fit.unscheduled.length} תכנים לא ייכנסו ויחכו לשיבוץ ידני.` : ' כל התכנים נכנסים.');
+  };
+  form.base.onchange = () => {
+    const tpl = data.trainings.get(form.base.value);
+    if (tpl) {
+      form.days.value = tpl.days.length;
+      if (!form.name.value.trim()) form.name.value = tpl.name;
+      form.trainees.value = tpl.trainees || form.trainees.value;
+    }
+    update();
+  };
+  form.days.oninput = update;
+  update();
+}
+
+/* ---------- generic trainings (templates) ---------- */
+function renderTemplates() {
+  const list = templatesList();
+  const frames = [...new Set(list.map((t) => t.frame || 'ללא מסגרת'))];
+  main.innerHTML = `<div class="page">
+    <div class="page-head"><h1>אימונים גנריים</h1><button class="btn primary" id="new-template">+ גנרי חדש</button></div>
+    <p class="hint">אימון גנרי הוא בסיס לכל סוג מסגרת. בונים אותו כמו אימון רגיל, אבל בלי תאריכים. כשיוצרים ממנו אימון אפשר לבחור מספר ימים אחר:
+      בפחות ימים התכנים מתקצרים עד זמן המינימום ומה שלא נכנס מחכה לשיבוץ, ביותר ימים התכנים מתפזרים.
+      אפשר גם לשמור אימון קיים כגנרי, מכפתור "שמירה כגנרי" ברשימת האימונים.</p>
+    ${list.length ? '' : '<p class="empty">עוד אין אימונים גנריים.</p>'}
+    ${frames.map((fr) => `<h2>${esc(fr)}</h2><div class="cards">${list.filter((t) => (t.frame || 'ללא מסגרת') === fr).map((t) => {
+      const s = templateStats(t);
+      return `<div class="card training-card" data-id="${t.id}">
+        <a class="card-main" href="#/training/${t.id}">
+          <h3>${esc(t.name)}</h3>
+          <div class="muted">${s.days} ימים · ${s.lessons} תכנים · ${fmtDur(s.minutes)} תוכן</div>
+        </a>
+        <div class="card-actions">
+          <button class="btn small primary" data-act="use">יצירת אימון</button>
+          <button class="btn small" data-act="dup">שכפול</button>
+          <button class="btn small danger" data-act="del">מחיקה</button>
+        </div>
+      </div>`;
+    }).join('')}</div>`).join('')}
+  </div>`;
+  main.querySelector('#new-template').onclick = () => templateModal();
+  main.querySelectorAll('.training-card').forEach((card) => {
+    const t = data.trainings.get(card.dataset.id);
+    card.querySelector('[data-act=use]').onclick = () => trainingModal(t.id);
+    card.querySelector('[data-act=dup]').onclick = () => saveAsTemplateModal(t);
+    card.querySelector('[data-act=del]').onclick = async () => {
+      if (await confirmDialog(`למחוק את הגנרי "${t.name}"? אימונים שכבר נוצרו ממנו לא יושפעו.`)) store.remove('trainings', t.id);
+    };
+  });
+}
+
+const framesDatalist = () => `<datalist id="frames-list">${[...new Set(templatesList().map((t) => t.frame).filter(Boolean))]
+  .map((f) => `<option value="${esc(f)}">`).join('')}</datalist>`;
+
+function templateModal() {
+  openModal({
+    title: 'אימון גנרי חדש',
+    body: `<label>שם<input name="name" required placeholder="לדוגמה: אימון חובשים בסיסי"></label>
+      <label>סוג מסגרת<input name="frame" list="frames-list" placeholder="לדוגמה: חובשים, חוליות, תאג״ד">${framesDatalist()}</label>
+      <div class="row">
+        <label>מספר ימים<input name="days" type="number" min="1" max="30" value="2"></label>
+        <label>מספר מתאמנים טיפוסי<input name="trainees" type="number" min="1" value="20"></label>
+      </div>`,
+    saveLabel: 'יצירה',
+    onSave: async (f) => {
+      const name = f.name.value.trim();
+      if (!name) { toast('צריך שם'); return false; }
+      const days = Array.from({ length: Math.max(1, +f.days.value || 1) }, (_, i) => ({ id: uid(), date: templateDate(i) }));
+      const t = { id: uid(), name, frame: f.frame.value.trim(), template: true, trainees: Math.max(1, +f.trainees.value || 1),
+        location: '', days, blocks: [], extras: [], packed: {}, includeMeals: true, createdAt: Date.now() };
+      await store.put('trainings', t);
+      location.hash = `#/training/${t.id}`;
+    },
+  });
+}
+
+/** Copies a training (or a generic one) into a new generic training. */
+function saveAsTemplateModal(src) {
+  openModal({
+    title: isTemplate(src) ? `שכפול "${src.name}"` : `שמירת "${src.name}" כאימון גנרי`,
+    body: `<label>שם הגנרי<input name="name" value="${esc(src.name)}${isTemplate(src) ? ' (עותק)' : ''}"></label>
+      <label>סוג מסגרת<input name="frame" list="frames-list" value="${esc(src.frame || '')}" placeholder="לדוגמה: חובשים">${framesDatalist()}</label>
+      <p class="hint">${isTemplate(src) ? '' : 'האימון המקורי לא משתנה. הימים יהפכו ל"יום 1", "יום 2" וכן הלאה, לפי סדר התאריכים.'}</p>`,
+    saveLabel: 'שמירה',
+    onSave: async (f) => {
+      const sorted = [...src.days].sort((a, b) => a.date.localeCompare(b.date));
+      const dayMap = new Map();
+      const days = sorted.map((d, i) => { const nd = { id: uid(), date: templateDate(i) }; dayMap.set(d.id, nd.id); return nd; });
+      const blocks = src.blocks.filter((b) => dayMap.has(b.dayId)).map((b) => ({ ...structuredClone(b), id: uid(), dayId: dayMap.get(b.dayId) }));
+      const t = { ...structuredClone(src), id: uid(), name: f.name.value.trim() || src.name, frame: f.frame.value.trim(), template: true,
+        days, blocks, packed: {}, unscheduled: [], createdAt: Date.now() };
+      delete t.templateId;
+      await store.put('trainings', t);
+      toast('נשמר כאימון גנרי');
       location.hash = `#/training/${t.id}`;
     },
   });
@@ -308,28 +440,101 @@ async function removeItemEverywhere(id) {
   await store.remove('items', id);
 }
 
-/* ---------- staff (firebase only) ---------- */
-function renderStaff() {
+/* ---------- management: staff (firebase only) + backups ---------- */
+let backupsCache = null; // loaded on demand, the list isn't part of the live data
+
+function renderAdmin() {
+  const fb = store.mode === 'firebase';
   const list = [...data.staff.values()].sort((a, b) => a.id.localeCompare(b.id));
   main.innerHTML = `<div class="page narrow">
-    <div class="page-head"><h1>צוות מורשה</h1></div>
+    ${fb ? `<div class="page-head"><h1>צוות מורשה</h1></div>
     <p class="hint">רק כתובות Gmail שברשימה יכולות להתחבר ולערוך.</p>
     <form id="add-staff" class="filters"><input name="email" type="email" dir="ltr" placeholder="name@gmail.com" required><button class="btn primary">הוספה</button></form>
-    <table class="table"><tbody>${list.map((s) => `<tr data-id="${esc(s.id)}"><td dir="ltr">${esc(s.id)}</td>
-      <td>${s.id === store.user?.email?.toLowerCase() ? '<span class="muted">(את/ה)</span>' : '<button class="btn small danger">הסרה</button>'}</td></tr>`).join('')}</tbody></table></div>`;
-  main.querySelector('#add-staff').onsubmit = (e) => {
-    e.preventDefault();
-    const email = e.target.email.value.trim().toLowerCase();
-    if (email) store.put('staff', { id: email, addedBy: store.user?.email || '' });
+    <table class="table staff-table"><tbody>${list.map((s) => `<tr data-id="${esc(s.id)}"><td dir="ltr">${esc(s.id)}</td>
+      <td>${s.id === store.user?.email?.toLowerCase() ? '<span class="muted">(את/ה)</span>' : '<button class="btn small danger">הסרה</button>'}</td></tr>`).join('')}</tbody></table>` : ''}
+
+    <div class="page-head section-gap"><h1>גיבויים</h1></div>
+    <p class="hint">${fb ? 'פעם ביום, בכניסה הראשונה של מדריך, נשמר אוטומטית עותק מלא של כל האימונים, השיעורים והציוד. נשמרים 30 הימים האחרונים. ' : ''}
+      שחזור מחזיר כל פריט מהגיבוי למצב שבו היה, ולא מוחק פריטים שנוספו אחרי הגיבוי.</p>
+    <div class="row backup-actions">
+      <button class="btn primary" id="bk-download">הורדת גיבוי עכשיו</button>
+      <label class="btn" for="bk-file">שחזור מקובץ…</label>
+      <input type="file" id="bk-file" accept=".json,application/json" hidden>
+    </div>
+    ${fb ? `<h3>גיבויים יומיים</h3><div id="bk-list">${backupsListHtml()}</div>` : ''}
+  </div>`;
+
+  if (fb) {
+    main.querySelector('#add-staff').onsubmit = (e) => {
+      e.preventDefault();
+      const email = e.target.email.value.trim().toLowerCase();
+      if (email) store.put('staff', { id: email, addedBy: store.user?.email || '' });
+    };
+    main.querySelectorAll('.staff-table button').forEach((b) => (b.onclick = async () => {
+      const id = b.closest('tr').dataset.id;
+      if (await confirmDialog(`להסיר את ${id}?`, 'הסרה')) store.remove('staff', id);
+    }));
+    if (!backupsCache) {
+      store.listBackups().then((l) => { backupsCache = l; refreshBackupsList(); })
+        .catch((e) => { backupsCache = { error: e.code || e.message }; refreshBackupsList(); });
+    }
+    main.querySelector('#bk-list').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-bk]');
+      if (!btn) return;
+      const id = btn.dataset.bk;
+      const backup = await store.getBackup(id);
+      if (btn.dataset.act === 'dl') download(`training-scheduler-${id}.json`, JSON.stringify(backup, null, 1), 'application/json');
+      else await confirmRestore(backup, `הגיבוי מ-${id}`);
+    });
+  }
+  main.querySelector('#bk-download').onclick = () =>
+    download(`training-scheduler-${todayIso()}.json`, JSON.stringify(exportAll(), null, 1), 'application/json');
+  main.querySelector('#bk-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    let backup;
+    try { backup = JSON.parse(await file.text()); } catch { toast('הקובץ לא תקין'); return; }
+    if (!backup.trainings && !backup.lessons) { toast('הקובץ לא נראה כמו גיבוי של האתר'); return; }
+    await confirmRestore(backup, `הקובץ ${file.name}`);
   };
-  main.querySelectorAll('tbody tr button').forEach((b) => (b.onclick = async () => {
-    const id = b.closest('tr').dataset.id;
-    if (await confirmDialog(`להסיר את ${id}?`, 'הסרה')) store.remove('staff', id);
-  }));
+}
+
+function backupsListHtml() {
+  if (!backupsCache) return '<p class="muted">טוען…</p>';
+  if (backupsCache.error) return `<p class="muted">לא ניתן לטעון גיבויים (${esc(backupsCache.error)}).</p>`;
+  if (!backupsCache.length) return '<p class="muted">עדיין אין גיבויים יומיים. הראשון ייווצר היום.</p>';
+  return `<table class="table"><tbody>${backupsCache.map((b) => `<tr>
+    <td>${ltr(esc(b.id))}</td><td class="muted hide-m" dir="ltr">${esc(b.by || '')}</td><td class="muted">${Math.round(b.size / 1024)}KB</td>
+    <td class="nowrap"><button class="btn small" data-bk="${esc(b.id)}" data-act="dl">הורדה</button>
+      <button class="btn small" data-bk="${esc(b.id)}" data-act="restore">שחזור</button></td></tr>`).join('')}</tbody></table>`;
+}
+function refreshBackupsList() {
+  const el = document.getElementById('bk-list');
+  if (el) el.innerHTML = backupsListHtml();
+}
+
+async function confirmRestore(backup, label) {
+  const count = (c) => Object.keys(backup[c] || {}).length;
+  const msg = `לשחזר את ${label}? (${count('trainings')} אימונים, ${count('lessons')} שיעורים, ${count('items')} פריטי ציוד). `
+    + 'כל פריט שקיים בגיבוי יחזור לגרסה שבגיבוי. פריטים שנוצרו אחרי הגיבוי יישארו.';
+  if (!(await confirmDialog(msg, 'שחזור'))) return;
+  // safety net: keep a copy of the current state before overwriting anything
+  download(`training-scheduler-before-restore-${Date.now()}.json`, JSON.stringify(exportAll(), null, 1), 'application/json');
+  const n = await restoreAll(backup);
+  toast(`שוחזרו ${n} פריטים`);
 }
 
 /* ---------- boot ---------- */
 window.addEventListener('hashchange', render);
-onChange(render);
+let snapshotTaken = false;
+onChange(() => {
+  if (store.status === 'ready' && store.mode === 'firebase' && !snapshotTaken) {
+    snapshotTaken = true;
+    // after the first full load, so the snapshot contains everything
+    setTimeout(() => store.snapshotDaily().then(() => { backupsCache = null; }), 3000);
+  }
+  render();
+});
 mobileQuery.addEventListener('change', render);
 initStore().then(render);
