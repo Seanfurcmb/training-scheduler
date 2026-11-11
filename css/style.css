@@ -189,7 +189,7 @@ input[type=color] { padding: 2px; height: 34px; width: 60px; }
 }
 
 .block {
-  position: absolute; margin-inline-start: 2px; border-radius: 6px; padding: 3px 6px; overflow: hidden; cursor: grab;
+  position: absolute; margin-inline-start: 2px; border-radius: 6px; padding: 3px 6px; overflow: visible; cursor: grab;
   background: color-mix(in srgb, var(--c) 18%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent);
   border-inline-start: 4px solid var(--c); user-select: none; touch-action: none; font-size: 12px; line-height: 1.25;
   transition: box-shadow .1s;
@@ -197,7 +197,9 @@ input[type=color] { padding: 2px; height: 34px; width: 60px; }
 .block:hover { box-shadow: var(--shadow-lg); z-index: 3; }
 .block-title { font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .block-time { color: color-mix(in srgb, var(--text) 65%, transparent); font-size: 11px; white-space: nowrap; }
-.block.compact { display: flex; gap: 6px; align-items: center; padding-block: 0; }
+.block-inner { height: 100%; overflow: hidden; }
+.block.compact { padding-block: 0; }
+.block.compact .block-inner { display: flex; gap: 6px; align-items: center; }
 .block.compact .block-title { -webkit-line-clamp: 1; white-space: nowrap; text-overflow: ellipsis; flex: 1; }
 .block.type-break, .block.type-meal { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 14%, var(--surface)) 0 6px, color-mix(in srgb, var(--c) 22%, var(--surface)) 6px 12px); }
 .block.type-external { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c) 10%, var(--surface)) 0 8px, var(--surface) 8px 16px); border-style: dashed; border-inline-start-style: solid; }
@@ -208,6 +210,8 @@ input[type=color] { padding: 2px; height: 34px; width: 60px; }
 .resize { position: absolute; inset-inline: 0; bottom: 0; height: 8px; cursor: ns-resize; }
 .resize::after { content: ''; position: absolute; left: 50%; bottom: 2px; width: 24px; height: 3px; margin-left: -12px; border-radius: 2px; background: color-mix(in srgb, var(--c) 60%, transparent); opacity: 0; }
 .block:hover .resize::after, .block.resizing .resize::after { opacity: 1; }
+/* grab handle: only on touch screens (a mouse drags from anywhere on the block) */
+.grip { display: none; }
 
 .drop-preview {
   position: absolute; inset-inline: 2px; border: 2px dashed var(--c); border-radius: 6px; background: color-mix(in srgb, var(--c) 12%, transparent);
@@ -255,7 +259,15 @@ body.trainee { background: var(--bg); }
 /* touch screens: let a swipe scroll; blocks are moved with a long press (see editor.js) */
 @media (pointer: coarse) {
   .block, .pal-item { touch-action: auto; -webkit-touch-callout: none; }
-  .resize { touch-action: none; }
+  .resize { touch-action: none; inset-inline-end: 30px; }
+  .grip {
+    display: flex; align-items: center; justify-content: center; position: absolute; z-index: 2;
+    inset-inline-end: 0; top: 50%; transform: translateY(-50%); width: 30px; height: 100%; min-height: 30px;
+    background: color-mix(in srgb, var(--c) 30%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c) 60%, transparent);
+    border-radius: 6px; color: color-mix(in srgb, var(--c) 70%, var(--text)); font-size: 16px; line-height: 1;
+    touch-action: none; cursor: grab;
+  }
+  .block-inner { padding-inline-end: 30px; }
 }
 
 .mobile-only { display: none !important; }
@@ -306,7 +318,8 @@ body.trainee { background: var(--bg); }
   /* always-visible resize grip, big enough for a thumb */
   .resize { height: 18px; touch-action: none; }
   .resize::after { opacity: 1; width: 36px; margin-left: -18px; bottom: 4px; height: 4px; }
-  .block.compact .resize { height: 12px; }
+  .block.compact .resize { height: 8px; }
+  .block.compact .resize::after { bottom: 2px; height: 3px; }
   .block.drag-source { opacity: .35; }
 
   .mobile-hint { display: block; position: absolute; bottom: 0; inset-inline: 0; margin: 0; padding: 6px 12px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--surface) 92%, transparent); border-top: 1px solid var(--border); pointer-events: none; }

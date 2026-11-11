@@ -211,7 +211,7 @@ function renderSchedule(body, t) {
           ${shown.map((d) => dayColumnHtml(t, d, height)).join('')}
         </div>` : '<p class="empty">אין ימים באימון. הוסיפו יום כדי להתחיל.</p>'}
       </div>
-      ${mobile && shown.length ? `<p class="mobile-hint">לחיצה על משבצת לעריכה · לחיצה ארוכה וגרירה להזזה</p>
+      ${mobile && shown.length ? `<p class="mobile-hint">לחיצה על משבצת לעריכה · גרירה מהידית ⠿ להזזה</p>
         <button class="fab" id="fab-add">+ הוספה</button>` : ''}
     </section>
   </div>`;
@@ -275,8 +275,10 @@ function renderSchedule(body, t) {
       if (blockEl) {
         const b = t.blocks.find((x) => x.id === blockEl.dataset.id);
         const kind = e.target.closest('.resize') ? 'resize' : 'move';
-        const offsetMin = (e.clientY - blockEl.getBoundingClientRect().top) / view.ppm;
-        beginDrag(e, t, { kind, block: b, el: blockEl, duration: b.duration, offsetMin, title: blockTitle(b), color: blockColor(b) });
+        // the grip handle moves right away on touch (no long press needed)
+        const immediate = !!e.target.closest('.grip');
+        const offsetMin = clamp((e.clientY - blockEl.getBoundingClientRect().top) / view.ppm, 0, b.duration);
+        beginDrag(e, t, { kind, immediate, block: b, el: blockEl, duration: b.duration, offsetMin, title: blockTitle(b), color: blockColor(b) });
         return;
       }
       const col = e.target.closest('.day-col');
@@ -339,8 +341,11 @@ function blockHtml(b, pos) {
   const cls = ['block', `type-${b.type}`, pos.lanes > 1 ? 'conflict' : '', out ? 'out-of-range' : '', b.duration * view.ppm < 34 ? 'compact' : ''].join(' ');
   return `<div class="${cls}" data-id="${b.id}" style="top:${(b.start - DAY_START) * view.ppm}px;height:${b.duration * view.ppm}px;inset-inline-start:${pos.lane * w}%;width:calc(${w}% - 4px);--c:${blockColor(b)}"
       title="${esc(blockTitle(b))}\n${fmtTime(b.start)} עד ${fmtTime(b.start + b.duration)}${l ? `\nטווח: ${durRange(l.min, l.max)}` : ''}${pos.lanes > 1 ? '\n⚠ חפיפה עם משבצת אחרת' : ''}">
+    <div class="block-inner">
     <div class="block-title">${b.type !== 'lesson' ? BLOCK_TYPES[b.type].icon + ' ' : ''}${esc(blockTitle(b))}</div>
     <div class="block-time"><span class="range ltr">${timeRange(b.start, b.start + b.duration)}</span> · <span class="dur">${fmtDur(b.duration)}</span>${out ? ' ⚠' : ''}</div>
+    </div>
+    <div class="grip" title="גרירה להזזה" aria-label="גרירה להזזה">⠿</div>
     <div class="resize" title="שינוי אורך"></div>
   </div>`;
 }
@@ -349,7 +354,7 @@ function blockHtml(b, pos) {
 // Mouse: drag starts after a small move. Touch: a short swipe scrolls as usual, and a
 // long press "lifts" the block so it can be dragged (resize handles drag immediately).
 function beginDrag(e, t, spec) {
-  const touch = e.pointerType === 'touch' && spec.kind !== 'resize';
+  const touch = e.pointerType === 'touch' && spec.kind !== 'resize' && !spec.immediate;
   if (!touch) e.preventDefault();
   drag = { ...spec, t, touch, armed: !touch, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, started: false, target: null };
   if (touch) {
